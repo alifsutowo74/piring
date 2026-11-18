@@ -1,6 +1,10 @@
 package com.piring.tracker;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.graphics.Color;
+import android.view.View;
+import android.view.Window;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.net.Uri;
@@ -29,11 +33,13 @@ public class MainActivity extends Activity {
     private static final int PICK_FILE = 1;
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
+    private long lastBack = 0;
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         web = new WebView(this);
+        web.setBackgroundColor(Color.parseColor("#111813")); // no white flash while loading
         setContentView(web);
 
         WebSettings s = web.getSettings();
@@ -105,12 +111,40 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         // Let the app close its own panels first; leave the app only from the Today screen.
         web.evaluateJavascript("window.__back ? window.__back() : false", value -> {
-            if (!"true".equals(value)) finish();
+            if ("true".equals(value)) return;
+            long now = System.currentTimeMillis();
+            if (now - lastBack < 2000) {
+                lastBack = 0;
+                new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                        .setTitle("Quit Piring?")
+                        .setMessage("Your log is saved.")
+                        .setNegativeButton("Stay", null)
+                        .setPositiveButton("Quit", (d, w) -> finish())
+                        .show();
+            } else {
+                lastBack = now;
+                web.evaluateJavascript("typeof toast==='function'&&toast('Press back again to quit')", null);
+            }
         });
     }
 
     /** Called from the page: window.Android.saveBackup(json, fileName). */
     private class Bridge {
+        /** Called from the page when the theme changes, so the phone's top and bottom bars match. */
+        @JavascriptInterface
+        public void setDark(boolean dark) {
+            runOnUiThread(() -> {
+                Window w = getWindow();
+                w.setStatusBarColor(Color.parseColor(dark ? "#111813" : "#f3f6f2"));
+                w.setNavigationBarColor(Color.parseColor(dark ? "#19221c" : "#ffffff"));
+                web.setBackgroundColor(Color.parseColor(dark ? "#111813" : "#f3f6f2"));
+                int flags = w.getDecorView().getSystemUiVisibility();
+                if (dark) flags &= ~(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+                else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                w.getDecorView().setSystemUiVisibility(flags);
+            });
+        }
+
         @JavascriptInterface
         public String saveBackup(String json, String name) {
             byte[] bytes = json.getBytes(StandardCharsets.UTF_8);

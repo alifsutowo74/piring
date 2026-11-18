@@ -293,6 +293,14 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
       </div></details>
       <div class="row"><button class="btn ghost" id="pCancel" hidden>Cancel</button><button class="btn primary" id="pSave" style="flex:1">Save my plan</button></div>
     </div>
+    <div class="panel stack">
+      <h3>Appearance</h3>
+      <div class="chips" role="group" aria-label="Theme">
+        <button class="chip" data-theme-pick="dark">Dark</button>
+        <button class="chip" data-theme-pick="light">Light</button>
+        <button class="chip" data-theme-pick="system">Match my phone</button>
+      </div>
+    </div>
     <div class="panel stack" id="backup" hidden>
       <h3>Backup</h3>
       <p class="small muted" style="margin:0">Your log is saved on this device. Save a backup file now and then, so you can restore it if you clear your browser or change phones.</p>
@@ -599,6 +607,16 @@ const CATS = [["all","All"],["rice","Rice & noodles"],["meat","Chicken & meat"],
 const MEALS = [["b","Breakfast"],["l","Lunch"],["d","Dinner"],["s","Snacks"],["k","Drinks"]];
 const BUILTIN = RAW.map((r,i)=>{const n=NUT[i];return {id:"f"+i,name:r[0],alias:r[1],cat:r[2],portions:r[3].map(p=>({label:p[0],kcal:p[1]})),nut:{p:n[0],c:n[1],s:n[2],f:n[3],fi:n[4]},micros:n[5]?n[5].split(","):[]}});
 
+// ---------- Theme (remembered on this device) ----------
+const THEME_KEY="piring-theme";
+function themePref(){let t=null;try{t=localStorage.getItem(THEME_KEY)}catch(e){}return t||(STANDALONE?"dark":"system")}
+function applyTheme(){
+  const t=themePref(), r=document.documentElement;
+  if(t==="system")r.removeAttribute("data-theme");else r.setAttribute("data-theme",t);
+  const dark=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);
+  try{if(window.Android&&Android.setDark)Android.setDark(dark)}catch(e){}
+  document.querySelectorAll("[data-theme-pick]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.themePick===t));
+}
 // ---------- State ----------
 const STANDALONE = false; // true in the installable phone build
 const LS_KEY = "piring-v1";
@@ -1349,6 +1367,7 @@ document.addEventListener("click",e=>{
   const t=e.target.closest("button,.scrim"); if(!t)return;
   if(t.id==="scrim"||t.id==="closeSheet")return closeSheet();
   if(t.dataset.tab){tab=t.dataset.tab;window.scrollTo(0,0);return render()}
+  if(t.dataset.themePick){try{localStorage.setItem(THEME_KEY,t.dataset.themePick)}catch(e){}return applyTheme()}
   if(t.dataset.recap){recapDays=Number(t.dataset.recap);return renderRecap()}
   if(t.dataset.go){tab=t.dataset.go;return render()}
   if(t.id==="addBtn")return openSheet();
@@ -1461,6 +1480,8 @@ window.addEventListener("focus",checkNewDay);
 setInterval(checkNewDay,60000);
 // Phone back button: close the sheet, then go back to Today, then leave the app
 window.__back=()=>{if(!document.getElementById("sheet").hidden){closeSheet();return true}if(tab!=="today"){tab="today";render();return true}return false};
+applyTheme();
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",applyTheme);
 loadLocal();
 state.meta.custom=state.meta.custom||[];state.meta.weights=state.meta.weights||{};state.meta.profile=state.meta.profile||{};
 render();
