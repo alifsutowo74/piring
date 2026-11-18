@@ -179,6 +179,8 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
 
   <!-- PROGRESS -->
   <section id="view-progress" class="stack" hidden>
+    <div class="panel stack" id="recap"></div>
+    <div class="panel stack" id="road"></div>
     <div class="panel stack">
       <div class="row between"><h2>Weight</h2><span id="trendPill"></span></div>
       <div class="stats" id="wStats"></div>
@@ -767,7 +769,107 @@ function maOf(points,i){ // 7-day trailing average by date
   const win=points.filter(p=>{const t=parseYmd(p[0]).getTime();return t>=start&&t<=end});
   return win.reduce((a,p)=>a+p[1],0)/win.length;
 }
+// ---------- Recap & advice ----------
+let recapDays=7;
+function periodStats(n,endOffset){
+  const end=addDays(ymd(new Date()),-endOffset), days=[];for(let i=n-1;i>=0;i--)days.push(addDays(end,-i));
+  const S={n,days,logged:0,kcal:0,tgt:0,onTarget:0,p:0,pT:0,s:0,sT:0,sOver:0,fi:0,fiT:0,fv:0,water:0,wT:0,vit:0,sessions:0,vol:0,cardio:0,burn:0,foods:{},sugarDrinks:0,pred:0,predDays:0};
+  days.forEach(d=>{
+    const ws=dayWorkouts(d);if(ws.length)S.sessions++;S.vol+=dayVolume(d);S.cardio+=ws.reduce((a,e)=>a+(e.type==="c"?Number(e.min)||0:0),0);S.burn+=dayExerciseKcal(d);
+    const e=dayTotal(d);if(!e)return;
+    S.logged++;const t=targetsFor(d)||{}, nu=dayNut(d);
+    S.kcal+=e;S.tgt+=t.kcal||0;if(t.kcal&&e<=t.kcal*1.05)S.onTarget++;
+    S.p+=nu.p;S.pT+=t.p||0;S.s+=nu.s;S.sT+=t.s||0;if(t.s&&nu.s>t.s)S.sOver++;
+    S.fi+=nu.fi;S.fiT+=t.fi||0;S.fv+=nu.fv;S.water+=dayWaterGlasses(d);S.wT+=t.w||0;
+    S.vit+=KEY_MICROS.filter(m=>nu.micros[m]).length/KEY_MICROS.length;
+    dayItems(d).forEach(it=>{S.foods[it.name]=(S.foods[it.name]||0)+it.kcal;const f=foodById(it.foodId);const nn=itemInfo(it).nut;if(f&&f.cat.startsWith("drink")&&nn&&nn.s>=10)S.sugarDrinks+=it.kcal});
+    const b=balanceFor(d);if(b){S.pred+=b.kg;S.predDays++}
+  });
+  const w=state.meta.weights||{}, inP=Object.keys(w).filter(k=>k>=days[0]&&k<=end).sort(), before=Object.keys(w).filter(k=>k<days[0]).sort().pop();
+  const a=before||inP[0], z=inP[inP.length-1];
+  S.wChange=a&&z&&a!==z?w[z]-w[a]:null; S.wWeeks=a&&z?(parseYmd(z)-parseYmd(a))/864e5/7:0;
+  return S;
+}
+function pctOf(a,b){return b?Math.round(a/b*100):null}
+function renderRecap(){
+  const el=document.getElementById("recap"), S=periodStats(recapDays,0), P=periodStats(recapDays,recapDays);
+  const label={7:"week",14:"2 weeks",30:"month"}[recapDays];
+  const chips=`<div class="chips" role="group" aria-label="Period">${[[7,"1 week"],[14,"2 weeks"],[30,"1 month"]].map(([v,l])=>`<button class="chip" data-recap="${v}" aria-pressed="${v===recapDays}">${l}</button>`).join("")}</div>`;
+  if(!S.logged&&!S.sessions){el.innerHTML=`<h2>Recap</h2>${chips}<div class="empty">Nothing logged in the last ${label} yet. Log your meals for a few days and your recap and advice show up here.</div>`;return}
+  const L=Math.max(1,S.logged), avgK=S.kcal/L, avgT=S.tgt/L, kp=pctOf(S.kcal,S.tgt);
+  const volCh=P.vol?Math.round((S.vol-P.vol)/P.vol*100):null;
+  const rows=[
+    ["Days logged",`${S.logged} of ${S.n}`,pctOf(S.logged,S.n)>=80?"great consistency":"log every day, even roughly"],
+    ["Calories per day",`${n0(avgK)} kcal`,avgT?`${kp}% of your target (${n0(avgT)}) · on target ${S.onTarget} of ${S.logged} days`:"set a plan to compare"],
+    ["Protein per day",`${n0(S.p/L)} g`,S.pT?`${pctOf(S.p,S.pT)}% of target`:""],
+    ["Sugar per day",`${n0(S.s/L)} g`,S.sT?`over the limit on ${S.sOver} day${S.sOver===1?"":"s"}`:""],
+    ["Fiber per day",`${n0(S.fi/L)} g`,S.fiT?`${pctOf(S.fi,S.fiT)}% of target`:""],
+    ["Fruit & veg per day",`${(S.fv/L).toFixed(1)}`,"goal is 5 servings"],
+    ["Water per day",`${(S.water/L).toFixed(1)} glasses`,S.wT?`${pctOf(S.water,S.wT)}% of target`:""],
+    ["Vitamins covered",`${Math.round(S.vit/L*100)}%`,"average per day"],
+    ["Workouts",`${S.sessions} day${S.sessions===1?"":"s"}`,`${fmtKg(S.vol)} volume${volCh===null?"":` (${volCh>=0?"+":""}${volCh}% vs the ${label} before)`}${S.cardio?` · ${S.cardio} min cardio`:""}`],
+    ["Weight",S.wChange===null?"–":`${S.wChange>0?"+":""}${S.wChange.toFixed(1)} kg`,S.predDays?`food log predicted ${kgText(S.pred)}`:"weigh in at least weekly"]
+  ];
+  const top=Object.entries(S.foods).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  // advice
+  const tips=[];
+  if(S.logged<S.n*0.7)tips.push(`You logged ${S.logged} of ${S.n} days. Unlogged days are usually the ones that go over, so log every day, even roughly.`);
+  if(avgT&&avgK>avgT*1.05){const extra=avgK-avgT;tips.push(`You ate about <b>${n0(extra)} kcal a day over</b> your target. That slows fat loss by about ${(extra*7/7700).toFixed(2)} kg per week. Look at your top foods below for the easiest cut.`)}
+  else if(avgT&&avgK<avgT*0.75)tips.push(`You averaged only ${pctOf(S.kcal,S.tgt)}% of your calorie target. If that is real, eat a bit more: going too low is hard to keep up and costs muscle. If not, some meals or drinks were probably not logged.`);
+  else if(avgT&&S.logged>=3)tips.push(`Calories were on target on <b>${S.onTarget} of ${S.logged}</b> logged days. Keep doing what you are doing.`);
+  if(S.pT&&S.p<S.pT*0.85)tips.push(`Protein averaged ${pctOf(S.p,S.pT)}% of your target. Add a palm of chicken, fish, tempe or 2 eggs to one more meal a day. It keeps you full and protects muscle.`);
+  if(S.sOver>=Math.max(1,S.logged/3))tips.push(`Sugar went over the limit on ${S.sOver} days.${S.sugarDrinks?` Sweet drinks alone added <b>${n0(S.sugarDrinks)} kcal</b>; swapping them for water, teh tawar or kopi hitam is the easiest win.`:""}`);
+  if(S.fv/L<3)tips.push(`You average ${(S.fv/L).toFixed(1)} fruit and veg servings a day. Add a fist of vegetables at lunch and dinner, and a fruit as a snack.`);
+  if(S.wT&&S.water<S.wT*0.8)tips.push(`Water is at ${pctOf(S.water,S.wT)}% of your target. Keep a bottle with you and log it under Drinks.`);
+  const perWeek=S.sessions/(S.n/7);
+  if(perWeek<2)tips.push(`You trained ${S.sessions} day${S.sessions===1?"":"s"} in this ${label}. Aim for 2 to 3 strength sessions a week so the weight you lose is fat, not muscle.`);
+  else if(volCh!==null&&volCh>0)tips.push(`Your training volume went up ${volCh}%. You are getting stronger while losing weight, which is exactly the goal.`);
+  if(S.predDays>=5&&S.pred<-0.3&&S.wChange!==null&&S.wChange>=0)tips.push(`Your food log says you should have lost ${kgText(-S.pred).replace("+","")}, but the scale did not move. Some food or drinks are probably not logged, or portions are bigger than picked.`);
+  el.innerHTML=`<div class="row between"><h2>Recap</h2><span class="small muted">last ${label}</span></div>${chips}
+    <div class="stats">
+      <div class="stat"><span class="label">Logged</span><b class="num">${S.logged}/${S.n}</b><span class="small muted">days</span></div>
+      <div class="stat"><span class="label">Avg kcal</span><b class="num">${n0(avgK)}</b><span class="small muted">${avgT?kp+"% of target":"per day"}</span></div>
+      <div class="stat"><span class="label">Weight</span><b class="num" style="color:${S.wChange<0?"var(--good)":S.wChange>0?"var(--chili)":"inherit"}">${S.wChange===null?"–":(S.wChange>0?"+":"")+S.wChange.toFixed(1)}</b><span class="small muted">kg</span></div></div>
+    <div>${rows.map(r=>`<div class="item"><div class="t"><b>${r[0]}</b><span class="small muted">${r[2]}</span></div><span class="k num">${r[1]}</span></div>`).join("")}</div>
+    ${top.length?`<div class="label">Most calories came from</div><div>${top.map(([nm,k])=>`<div class="row between small"><span>${esc(nm)}</span><b class="num">${n0(k)} kcal · ${pctOf(k,S.kcal)}%</b></div>`).join("")}</div>`:""}
+    ${tips.length?`<div class="basket"><span class="label" style="color:var(--accent)">What to focus on next</span><ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">${tips.slice(0,5).map(t=>`<li>${t}</li>`).join("")}</ul></div>`:""}`;
+}
+function renderRoad(){
+  const el=document.getElementById("road"), p=curProfile(), c=calcTarget(p);
+  if(!c||!Number(p.goal)){el.innerHTML=`<h2>Reaching your goal</h2><p class="small muted" style="margin:0">Add a goal weight on the Target tab to see your road to it and how to keep it after.</p><button class="btn ghost" data-go="target">Set goal weight</button>`;return}
+  const w=Number(p.weight), goal=Number(p.goal), h=Number(p.height), diff=goal-w;
+  // actual pace from the last 4 weeks of weigh-ins
+  const S=periodStats(28,0), actual=S.wChange!==null&&S.wWeeks>=1?S.wChange/S.wWeeks:null;
+  const maint=Math.round((10*goal+6.25*h-5*Number(p.age)+(p.sex==="f"?-161:5))*(Number(p.act)||1.2)/50)*50;
+  const protein=Math.round(1.6*goal);
+  let status="";
+  if(Math.abs(diff)<0.3)status=`<span class="pill">At your goal</span>`;
+  else if(actual!==null){const rightWay=Math.sign(actual)===Math.sign(diff)&&Math.abs(actual)>0.05;
+    status=rightWay?(Math.abs(actual)>=c.pace*0.8?`<span class="pill">On track</span>`:`<span class="pill flat">Slower than planned</span>`):`<span class="pill warn">Not moving yet</span>`}
+  const etaActual=actual&&Math.sign(actual)===Math.sign(diff)&&Math.abs(actual)>0.05?Math.ceil(Math.abs(diff)/Math.abs(actual)):null;
+  const losing=diff<0;
+  el.innerHTML=`<div class="row between"><h2>Reaching ${goal} kg</h2>${status}</div>
+    <p class="small" style="margin:0">${Math.abs(diff)<0.3?"You made it. Now the job is keeping it.":`You have <b>${Math.abs(diff).toFixed(1)} kg</b> to ${losing?"lose":"gain"}. Your plan aims for ${c.pace||0} kg per week${actual!==null?`, and over the last 4 weeks you ${actual<0?"lost":"gained"} <b>${Math.abs(actual).toFixed(2)} kg per week</b>`:""}.${etaActual?` At that rate you reach ${goal} kg in about <b>${etaActual} weeks</b>.`:""}`}</p>
+    ${Math.abs(diff)<0.3?"":`<div class="label">How to get there</div>
+    <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+      <li><b>Hit your calories most days, not every day.</b> 5 or 6 good days a week is enough. One big day does not ruin a week.</li>
+      <li><b>Protein at every meal.</b> A palm of chicken, fish, egg, tempe or tofu with each meal keeps you full and keeps your muscle.</li>
+      <li><b>Drinks are the easy win.</b> Sweet tea, kopi susu and bubble tea can add 300 to 600 kcal a day without filling you up.</li>
+      <li><b>Lift 2 to 3 times a week</b> and add a little weight or reps over time. Walk on the other days.</li>
+      <li><b>Weigh in 2 to 3 mornings a week</b> and trust the 7-day line, not single days. Your plan lowers calories by itself as your weight goes down.</li>
+      <li><b>If the scale stops for 2 to 3 weeks</b>, check your portions and drinks first. If those are honest, take 100 to 150 kcal more off, or add a daily walk.</li>
+    </ul>`}
+    <div class="label">Keeping it off at ${goal} kg</div>
+    <ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
+      <li>At ${goal} kg you will burn about <b>${n0(maint)} kcal a day</b>. That is your maintenance number.</li>
+      <li><b>Raise calories slowly</b>, about 100 to 150 kcal per week, until you reach maintenance. Going straight back to old habits brings the weight back fast.</li>
+      <li>Keep protein around <b>${protein} g a day</b> and keep training. Muscle makes maintenance easier.</li>
+      <li>Set a <b>2 kg range</b> (${(goal-1).toFixed(0)} to ${(goal+1).toFixed(0)} kg). If your 7-day average goes above it, log carefully for 2 weeks to bring it back.</li>
+      <li>Keep weighing in once a week and logging on days you eat out. These two habits are what keep weight off long term.</li>
+    </ul>`;
+}
 function renderProgress(){
+  renderRecap(); renderRoad();
   const w=state.meta.weights||{};
   const pts=Object.keys(w).sort().map(k=>[k,Number(w[k])]);
   document.getElementById("wDate").value=document.getElementById("wDate").value||ymd(new Date());
@@ -1247,6 +1349,7 @@ document.addEventListener("click",e=>{
   const t=e.target.closest("button,.scrim"); if(!t)return;
   if(t.id==="scrim"||t.id==="closeSheet")return closeSheet();
   if(t.dataset.tab){tab=t.dataset.tab;window.scrollTo(0,0);return render()}
+  if(t.dataset.recap){recapDays=Number(t.dataset.recap);return renderRecap()}
   if(t.dataset.go){tab=t.dataset.go;return render()}
   if(t.id==="addBtn")return openSheet();
   if(t.dataset.add)return openSheet(t.dataset.add);
