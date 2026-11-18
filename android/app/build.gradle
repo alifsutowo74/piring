@@ -1,0 +1,38 @@
+plugins { id 'com.android.application' }
+
+def run = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
+android {
+    namespace 'com.piring.tracker'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'com.piring.tracker'
+        minSdk 24
+        targetSdk 34
+        versionCode run
+        versionName "1.${run}"
+    }
+    signingConfigs {
+        // Fixed key so each new version installs over the old one and keeps your data.
+        release {
+            storeFile file('../piring.keystore')
+            storePassword 'piring-app'
+            keyAlias 'piring'
+            keyPassword 'piring-app'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

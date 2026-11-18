@@ -1,15 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Piring Calorie Tracker</title>
-<meta name="theme-color" content="#2c6e4f">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-180.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px;font-family:system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
-</head><body>
-
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&display=swap">
@@ -601,7 +590,7 @@ const MEALS = [["b","Breakfast"],["l","Lunch"],["d","Dinner"],["s","Snacks"],["k
 const BUILTIN = RAW.map((r,i)=>{const n=NUT[i];return {id:"f"+i,name:r[0],alias:r[1],cat:r[2],portions:r[3].map(p=>({label:p[0],kcal:p[1]})),nut:{p:n[0],c:n[1],s:n[2],f:n[3],fi:n[4]},micros:n[5]?n[5].split(","):[]}});
 
 // ---------- State ----------
-const STANDALONE = true; // true in the installable phone build
+const STANDALONE = false; // true in the installable phone build
 const LS_KEY = "piring-v1";
 let state = {meta:{profile:{},custom:[],weights:{}}, days:{}};
 let viewDate = ymd(new Date());
@@ -1224,10 +1213,12 @@ document.getElementById("browseList").addEventListener("click",()=>{viewDate=ymd
 
 if(STANDALONE){
   document.getElementById("backup").hidden=false;
-  if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+  if("serviceWorker" in navigator&&!window.Android)navigator.serviceWorker.register("sw.js").catch(()=>{});
 }
 document.getElementById("exportBtn").addEventListener("click",()=>{
-  const blob=new Blob([JSON.stringify({app:"piring",version:1,saved:new Date().toISOString(),state},null,1)],{type:"application/json"});
+  const json=JSON.stringify({app:"piring",version:1,saved:new Date().toISOString(),state},null,1), fname="piring-backup-"+ymd(new Date())+".json";
+  if(window.Android&&Android.saveBackup){const r=Android.saveBackup(json,fname);return toast(r||"Backup saved to Downloads")}
+  const blob=new Blob([json],{type:"application/json"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="piring-backup-"+ymd(new Date())+".json";document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href),5000);toast("Backup saved");
 });
@@ -1239,10 +1230,10 @@ document.getElementById("importFile").addEventListener("change",e=>{
     catch(err){toast("That file is not a Piring backup")}e.target.value=""};
   r.readAsText(f);
 });
+// Phone back button: close the sheet, then go back to Today, then leave the app
+window.__back=()=>{if(!document.getElementById("sheet").hidden){closeSheet();return true}if(tab!=="today"){tab="today";render();return true}return false};
 loadLocal();
 state.meta.custom=state.meta.custom||[];state.meta.weights=state.meta.weights||{};state.meta.profile=state.meta.profile||{};
 render();
 initDb();
 </script>
-
-</body></html>

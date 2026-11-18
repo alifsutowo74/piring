@@ -1,0 +1,37 @@
+name: Build Android app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Put the app screens into the Android project
+        run: python3 build.py
+      - name: Build the APK
+        run: gradle -p android assembleRelease --no-daemon
+      - run: cp android/app/build/outputs/apk/release/app-release.apk Piring.apk
+      - name: Publish the APK as a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.${{ github.run_number }}
+          name: Piring 1.${{ github.run_number }}
+          files: Piring.apk
+          make_latest: true
+          body: |
+            Download **Piring.apk** below on your Android phone and open it to install or update.
+            Updating keeps your logged food, workouts and weight.
