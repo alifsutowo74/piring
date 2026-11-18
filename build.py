@@ -13,5 +13,6 @@ head = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 </head><body>
 """
 out = root / "android/app/src/main/assets/index.html"
+out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(head + body + "\n</body></html>\n")
 print("wrote", out)
