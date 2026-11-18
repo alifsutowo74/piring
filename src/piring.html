@@ -733,7 +733,7 @@ function render(){
 }
 
 function renderToday(){
-  const tot=dayTotal(viewDate), t=target();
+  const tot=dayTotal(viewDate), dt=dayTargets(viewDate), t=dt?dt.kcal:target();
   const s=document.getElementById("summary");
   if(t){
     const left=t-tot, pct=Math.min(100,tot/t*100);
@@ -955,8 +955,33 @@ const WATER_NAMES=["Water","Teh tawar / tea, no sugar","Aqua / Le Minerale / Cle
 function portionMl(label){const m=/([\d.]+)\s*(ml|L)\b/i.exec(label||"");if(m)return Number(m[1])*(m[2].toLowerCase()==="l"?1000:1);return 250}
 function dayWaterGlasses(d){return dayItems(d).reduce((a,it)=>a+(it.wml||0),0)/250}
 const MICRO_FOODS={A:"papaya, mango, carrots or green veg",B:"chicken, eggs or brown rice",C:"orange, papaya, guava or som tam",D:"eggs or fish",E:"peanuts, avocado or a little oil",Fe:"beef, tempe or kangkung",Ca:"milk, tofu or tempe",K:"banana, potato or coconut water",Mg:"nuts, brown rice or oatmeal",Zn:"beef, shrimp or chicken thigh"};
+// Today's numbers: the plan, plus half of today's workout burn, minus a small catch-up if recent days went over
+function dayTargets(d){
+  const base=nutTargets(); if(!base) return null;
+  const p=curProfile(), c=calcTarget(p), plan=base.kcal;
+  const ex=dayExerciseKcal(d), workAdd=Math.round(ex*0.5/10)*10;
+  let over=0,days=0;
+  for(let i=1;i<=7;i++){const x=addDays(d,-i);const e=dayTotal(x);if(e>0){over+=e-plan;days++}}
+  const catchUp=over>0&&c.dir<=0?-Math.min(200,Math.round(over/3/10)*10):0;
+  const floor=p.sex==="f"?1200:1500;
+  const kcal=Math.max(Number(p.manual)?0:Math.min(floor,plan),plan+workAdd+catchUp);
+  const diff=kcal-plan;
+  const t=Object.assign({},base,{kcal,plan,workAdd,catchUp:kcal-plan-workAdd,over,days,
+    c:Math.max(0,base.c+Math.round(diff/4)), s:Math.round(base.s*kcal/plan),
+    w:base.w+(ex>0?Math.round(ex/250):0)}); // a glass of water per ~250 kcal burned
+  return t;
+}
+function goalEta(){
+  const p=curProfile(), c=calcTarget(p), w=Number(p.weight), goal=Number(p.goal);
+  if(!c||!goal) return null;
+  const diff=goal-w;
+  if(Math.abs(diff)<0.3) return {at:true,goal};
+  if(!c.pace) return {goal,noPace:true};
+  const wk=Math.ceil(Math.abs(diff)/c.pace);
+  return {goal,diff,wk,date:parseYmd(addDays(ymd(new Date()),wk*7))};
+}
 function renderNutrition(){
-  const el=document.getElementById("nutrition"), tg=nutTargets();
+  const el=document.getElementById("nutrition"), tg=dayTargets(viewDate);
   if(!tg){el.innerHTML=`<h2>Today's recommendation</h2><p class="small" style="margin:0">Fill in the Target tab once. Then this card tells you how much calories, protein, carbs, fat, sugar, fiber and water you need each day, and what to eat next.</p><button class="btn primary" data-go="target">Set my targets</button>`;return}
   const n=dayNut(viewDate), eaten=dayTotal(viewDate), water=dayWaterGlasses(viewDate);
   const rows=[["Calories",eaten,tg.kcal,"kcal","aim"],["Protein",n.p,tg.p,"g","aim"],["Carbs",n.c,tg.c,"g","aim"],["Fat",n.f,tg.f,"g","aim"],["Sugar",n.s,tg.s,"g","limit"],["Fiber",n.fi,tg.fi,"g","aim"],["Fruit & veg",n.fv,tg.fv,"servings","aim"],["Water",water,tg.w,"glasses","aim"]];
@@ -984,7 +1009,17 @@ function renderNutrition(){
   const miss=KEY_MICROS.filter(m=>!n.micros[m]);
   const have=KEY_MICROS.length-miss.length, vp=Math.round(have/KEY_MICROS.length*100);
   if(eaten&&miss.length)tips.push(`Still missing ${miss.slice(0,3).map(m=>`<b>${MICRO[m]}</b> (${MICRO_FOODS[m]})`).join(", ")}.`);
+  const eta=goalEta();
+  const goalLine=!eta?`Add a goal weight on the Target tab and these numbers will be set to reach it.`
+    :eta.at?`You are at your goal of <b>${eta.goal} kg</b>. These amounts keep you there.`
+    :eta.noPace?`Pick a pace on the Target tab to start moving toward <b>${eta.goal} kg</b>.`
+    :`To reach <b>${eta.goal} kg</b> by about <b>${eta.date.toLocaleDateString(undefined,{month:"long",year:"numeric"})}</b>, this is what you need today.`;
+  const adj=[];
+  if(tg.workAdd)adj.push(`<b>+${n0(tg.workAdd)} kcal</b> because you trained (half of the ${n0(dayExerciseKcal(viewDate))} kcal you burned), mostly as carbs`);
+  if(tg.catchUp<0)adj.push(`<b>−${n0(-tg.catchUp)} kcal</b> to make up for eating ${n0(tg.over)} kcal over your plan ${tg.days>1?` in the last ${tg.days} logged days`:" on your last logged day"}`);
   el.innerHTML=`<div class="row between"><h2>Today's recommendation</h2><span class="pill ${onTrack>=6?"":onTrack>=3?"flat":"warn"}">${onTrack} of ${rows.length} on track</span></div>
+    <p class="small" style="margin:0">${goalLine}</p>
+    ${adj.length?`<div class="small muted">Your plan is ${n0(tg.plan)} kcal. Today: ${adj.join("; ")}.</div>`:""}
     <div class="nut" style="grid-template-columns:100px minmax(0,1fr) auto">${html}</div>
     ${n.unknown?`<p class="small muted" style="margin:0">${n.unknown} item(s) typed in by kcal only, so their protein, carbs and fat are not counted.</p>`:""}
     ${tips.length?`<div class="basket"><span class="label" style="color:var(--accent)">What to eat next</span><ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">${tips.slice(0,5).map(t=>`<li>${t}</li>`).join("")}</ul></div>`:""}
