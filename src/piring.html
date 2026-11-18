@@ -238,16 +238,21 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
 
   <!-- TARGET -->
   <section id="view-target" class="stack" hidden>
-    <div class="panel stack">
-      <h2>Your daily target</h2>
-      <p class="small muted" style="margin:0">Fill this in once. The app estimates what your body burns per day, then takes some off so you lose weight slowly and steadily.</p>
+    <div class="panel stack" id="targetCard" hidden></div>
+    <div class="panel stack" id="targetForm">
+      <h2>Your plan</h2>
+      <p class="small muted" style="margin:0">Fill this in once. The app works out what your body burns per day and sets your calories and nutrition to reach your goal weight slowly and steadily.</p>
       <div class="row">
         <label class="field"><span>Sex</span><select id="pSex"><option value="m">Male</option><option value="f">Female</option></select></label>
         <label class="field"><span>Age</span><input type="number" id="pAge" inputmode="numeric" min="12" max="100" placeholder="30"></label>
       </div>
       <div class="row">
         <label class="field"><span>Height (cm)</span><input type="number" id="pHeight" inputmode="numeric" min="100" max="230" placeholder="170"></label>
-        <label class="field"><span>Weight (kg)</span><input type="number" id="pWeight" inputmode="decimal" step="0.1" placeholder="from your last weigh-in"></label>
+        <div class="field"></div>
+      </div>
+      <div class="row">
+        <label class="field"><span>Weight now (kg)</span><input type="number" id="pWeight" inputmode="decimal" step="0.1" placeholder="80"></label>
+        <label class="field"><span>Goal weight (kg)</span><input type="number" id="pGoal" inputmode="decimal" step="0.1" placeholder="70"></label>
       </div>
       <label class="field"><span>How active are you?</span>
         <select id="pAct">
@@ -257,7 +262,7 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
           <option value="1.725">Physical job (lifting, carrying)</option>
         </select></label>
       <p class="small muted" style="margin:-6px 0 0">Don't count workouts here. Log them in the Workout tab and they are added on the days you train.</p>
-      <label class="field"><span>How fast to lose?</span>
+      <label class="field"><span>How fast to reach your goal?</span>
         <select id="pPace">
           <option value="0">Keep weight the same</option>
           <option value="0.25">Gentle, about 0.25 kg per week</option>
@@ -265,8 +270,10 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
           <option value="0.75">Faster, about 0.75 kg per week</option>
         </select></label>
       <div class="panel stack" style="background:var(--surface-2);border:0" id="calcOut"></div>
-      <h3 style="margin-top:6px">Nutrition targets</h3>
-      <p class="small muted" style="margin:-6px 0 0">These fill in from your calories and weight. Type a number only if you want to change one.</p>
+      <details>
+      <summary class="small" style="cursor:pointer;font-weight:600;padding-block:4px">Change nutrition targets yourself (optional)</summary>
+      <div class="stack" style="margin-top:8px">
+      <p class="small muted" style="margin:0">They are worked out for you from your weight and goal. The grey numbers are the suggestion. Type a number only to replace one.</p>
       <div class="row">
         <label class="field"><span>Protein (g)</span><input type="number" id="tP" inputmode="numeric" min="0"></label>
         <label class="field"><span>Carbs (g)</span><input type="number" id="tC" inputmode="numeric" min="0"></label>
@@ -280,8 +287,9 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
         <label class="field"><span>Water (glasses)</span><input type="number" id="tW" inputmode="numeric" min="0"></label>
         <label class="field"><span>Fruit & veg (servings)</span><input type="number" id="tFv" inputmode="numeric" min="0"></label>
       </div>
-      <label class="field"><span>Or set your own calorie target (kcal per day)</span><input type="number" id="pManual" inputmode="numeric" min="800" max="6000" placeholder="leave empty to use the suggestion"></label>
-      <button class="btn primary" id="pSave">Save targets</button>
+      <label class="field"><span>Your own calorie target (kcal per day)</span><input type="number" id="pManual" inputmode="numeric" min="800" max="6000" placeholder="leave empty to use the suggestion"></label>
+      </div></details>
+      <div class="row"><button class="btn ghost" id="pCancel" hidden>Cancel</button><button class="btn primary" id="pSave" style="flex:1">Save my plan</button></div>
     </div>
     <div class="panel stack" id="backup" hidden>
       <h3>Backup</h3>
@@ -693,17 +701,20 @@ async function initDb(){
 // ---------- Target ----------
 function latestWeight(){const w=state.meta.weights||{};const ks=Object.keys(w).sort();return ks.length?w[ks[ks.length-1]]:null}
 function calcTarget(p){
-  p=p||state.meta.profile||{};
+  p=p||curProfile();
   const wt=Number(p.weight)||latestWeight(), age=Number(p.age), ht=Number(p.height);
   if(!wt||!age||!ht) return null;
   const bmr=10*wt+6.25*ht-5*age+(p.sex==="f"?-161:5);
   const tdee=bmr*(Number(p.act)||1.2);
-  const deficit=(Number(p.pace)||0)*7700/7;
+  const goal=Number(p.goal), dir=!goal||Math.abs(goal-wt)<0.3?(goal?0:-1):goal<wt?-1:1; // no goal: assume losing
+  const pace=Math.min(Number(p.pace)||0,dir>0?0.5:0.75);
+  const change=dir*pace*7700/7;
   const floor=p.sex==="f"?1200:1500;
-  let t=Math.max(floor,tdee-deficit);
-  return {bmr,tdee,target:Math.round(t/50)*50,floored:tdee-deficit<floor};
+  let t=Math.max(floor,tdee+change);
+  return {bmr,tdee,dir,pace,target:Math.round(t/50)*50,floored:tdee+change<floor};
 }
-function target(){return targetFor(state.meta.profile||{})}
+function curProfile(){const p=state.meta.profile||{};const lw=latestWeight();return lw?Object.assign({},p,{weight:lw}):p}
+function target(){return targetFor(curProfile())}
 
 // ---------- Rendering ----------
 function render(){
@@ -711,7 +722,7 @@ function render(){
   document.querySelectorAll(".tab").forEach(b=>b.dataset.tab===tab?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current"));
   document.getElementById("dayNav").hidden=!(tab==="today"||tab==="workout");
   const dl=viewDate===ymd(new Date())?"Today":fmtDate(viewDate);
-  const titles={today:dl,workout:"Workout · "+dl,progress:"Progress",foods:"Foods & portions",target:"Daily target"};
+  const titles={today:dl,workout:"Workout · "+dl,progress:"Progress",foods:"Foods & portions",target:"Your plan"};
   document.getElementById("hdrTitle").textContent=titles[tab];
   document.getElementById("nextDay").disabled=viewDate>=ymd(new Date());
   if(tab==="today")renderToday();
@@ -860,32 +871,85 @@ function renderFoodList(el,q,cat,limit,pickable){
     :`<div class="empty">No match. ${pickable?'Use "Type kcal myself" below, or add it under Foods.':""}</div>`;
 }
 
+let editingPlan=false;
+function bmiOf(w,h){return w&&h?w/((h/100)**2):null}
+function bmiLabel(b){return b<18.5?"underweight":b<25?"healthy":b<30?"overweight":"obese"}
+function renderPlanCard(){
+  const p=curProfile(), c=calcTarget(p), n=nutTargets(p), el=document.getElementById("targetCard");
+  const w=Number(p.weight), goal=Number(p.goal)||null, start=Number(p.start)||w;
+  const actTxt=document.querySelector(`#pAct option[value="${p.act||"1.2"}"]`)?.textContent||"";
+  let goalHtml="";
+  if(goal){
+    const diff=goal-w, prog=start!==goal?Math.max(0,Math.min(100,Math.round((start-w)/(start-goal)*100))):100;
+    let eta="";
+    if(Math.abs(diff)<0.3)eta=`You are at your goal weight. Your calories are set to keep it there.`;
+    else if(!c.pace)eta=`Pick a pace in Edit to start moving toward ${goal} kg.`;
+    else{const wk=Math.ceil(Math.abs(diff)/c.pace);const d=parseYmd(addDays(ymd(new Date()),wk*7));
+      eta=`At about ${c.pace} kg per week you could reach <b>${goal} kg</b> around <b>${d.toLocaleDateString(undefined,{month:"long",year:"numeric"})}</b> (${wk} weeks).`}
+    goalHtml=`<div class="stats"><div class="stat"><span class="label">Now</span><b class="num">${w.toFixed(1)}</b><span class="small muted">kg</span></div>
+      <div class="stat"><span class="label">Goal</span><b class="num">${goal.toFixed(1)}</b><span class="small muted">kg</span></div>
+      <div class="stat"><span class="label">To go</span><b class="num">${diff>0?"+":""}${diff.toFixed(1)}</b><span class="small muted">kg</span></div></div>
+      <div class="meter"><i style="width:${prog}%"></i></div>
+      <div class="row between small muted"><span>Started at ${start.toFixed(1)} kg</span><span>${prog}% of the way</span></div>
+      <div class="small">${eta}</div>`;
+  }else goalHtml=`<div class="small">No goal weight yet. Tap Edit to add one, and your plan will be set to reach it.</div>`;
+  const b=bmiOf(w,Number(p.height)), gb=goal&&bmiOf(goal,Number(p.height));
+  const rows=[["Calories",n0(n.kcal)+" kcal",c.dir<0?`about ${n0(c.tdee-n.kcal)} less than you burn`:c.dir>0?`about ${n0(n.kcal-c.tdee)} more than you burn`:"same as you burn"],
+    ["Protein",n.p+" g",Number(p.tP)?"set by you":`${(n.p/(goal||w)).toFixed(1)} g per kg of goal weight, keeps your muscle`],
+    ["Carbs",n.c+" g",Number(p.tC)?"set by you":"the rest of your calories, for energy"],
+    ["Fat",n.f+" g",Number(p.tF)?"set by you":"about a quarter of your calories"],
+    ["Sugar",n.s+" g max",Number(p.tS)?"set by you":"under 10% of calories"],
+    ["Fiber",n.fi+" g",Number(p.tFi)?"set by you":"keeps you full longer"],
+    ["Water",n.w+" glasses",Number(p.tW)?"set by you":"about 35 ml per kg of body weight"],
+    ["Fruit & veg",n.fv+" servings",Number(p.tFv)?"set by you":"for vitamins and fiber"]];
+  el.innerHTML=`<div class="row between"><h2>Your plan</h2><button class="btn ghost" id="editPlan" style="padding:6px 14px">Edit</button></div>
+    ${goalHtml}
+    <div class="label" style="margin-top:4px">Every day</div>
+    <div>${rows.map(r=>`<div class="item"><div class="t"><b>${r[0]}</b><span class="small muted">${r[2]}</span></div><span class="k num">${r[1]}</span></div>`).join("")}</div>
+    ${c.floored?`<p class="small muted" style="margin:0">Calories are held at a safe minimum, so losing may go a little slower than the pace you picked.</p>`:""}
+    <div class="label" style="margin-top:4px">About you</div>
+    <div class="small">${p.sex==="f"?"Female":"Male"} · ${p.age} years · ${p.height} cm · ${esc(actTxt)}</div>
+    ${b?`<div class="small">BMI ${b.toFixed(1)} (${bmiLabel(b)})${gb?` → ${gb.toFixed(1)} at your goal (${bmiLabel(gb)})`:""}</div>`:""}
+    ${gb&&gb<18.5?`<p class="small" style="margin:0;color:var(--chili)">Your goal weight is below the healthy range for your height. Consider a higher goal.</p>`:""}`;
+}
 function renderTarget(){
   const p=state.meta.profile||{};
+  const hasPlan=!!(p.age&&p.height&&(p.weight||latestWeight()));
+  const showCard=hasPlan&&!editingPlan;
+  document.getElementById("targetCard").hidden=!showCard;
+  document.getElementById("targetForm").hidden=showCard;
+  document.getElementById("pCancel").hidden=!hasPlan;
+  if(showCard){renderPlanCard();return}
   const set=(id,v)=>{const el=document.getElementById(id);if(document.activeElement!==el&&v!==undefined&&v!==null)el.value=v};
-  set("pSex",p.sex||"m");set("pAge",p.age||"");set("pHeight",p.height||"");set("pWeight",p.weight||"");set("pAct",p.act||"1.2");set("pPace",p.pace??"0.5");set("pManual",p.manual||"");["tP","tC","tF","tS","tFi","tW","tFv"].forEach(k=>set(k,p[k]||""));
+  set("pSex",p.sex||"m");set("pAge",p.age||"");set("pHeight",p.height||"");set("pWeight",latestWeight()||p.weight||"");set("pGoal",p.goal||"");set("pAct",p.act||"1.2");set("pPace",p.pace??"0.5");set("pManual",p.manual||"");["tP","tC","tF","tS","tFi","tW","tFv"].forEach(k=>set(k,p[k]||""));
   if(!p.weight&&latestWeight())document.getElementById("pWeight").placeholder=latestWeight()+" (last weigh-in)";
   updateCalc();
 }
-function readProfile(){const o={sex:pSex.value,age:pAge.value,height:pHeight.value,weight:pWeight.value,act:pAct.value,pace:pPace.value,manual:pManual.value};["tP","tC","tF","tS","tFi","tW","tFv"].forEach(k=>o[k]=document.getElementById(k).value);return o}
+function readProfile(){const o={sex:pSex.value,age:pAge.value,height:pHeight.value,weight:pWeight.value,goal:pGoal.value,act:pAct.value,pace:pPace.value,manual:pManual.value};["tP","tC","tF","tS","tFi","tW","tFv"].forEach(k=>o[k]=document.getElementById(k).value);return o}
 function updateCalc(){
   const c=calcTarget(readProfile()), o=document.getElementById("calcOut");
   if(!c){o.innerHTML=`<span class="small muted">Enter age, height and weight to see your suggested target.</span>`;return}
   o.innerHTML=`<div class="row between"><span class="small">Your body burns about</span><b class="num">${n0(c.tdee)} kcal/day</b></div>
-    <div class="row between"><span class="small">Suggested target</span><b class="num" style="font-size:1.3rem;color:var(--accent)">${n0(c.target)} kcal/day</b></div>
-    ${(()=>{const n=nutTargets(readProfile());if(!n)return "";const ph={tP:n.p,tC:n.c,tF:n.f,tS:n.s,tFi:n.fi,tW:n.w,tFv:n.fv};Object.keys(ph).forEach(k=>document.getElementById(k).placeholder=ph[k]);return ""})()}
+    <div class="row between"><span class="small">Your calories</span><b class="num" style="font-size:1.3rem;color:var(--accent)">${n0(targetFor(readProfile()))} kcal/day</b></div>
+    ${(()=>{const n=nutTargets(readProfile());if(!n)return "";const ph={tP:n.p,tC:n.c,tF:n.f,tS:n.s,tFi:n.fi,tW:n.w,tFv:n.fv};Object.keys(ph).forEach(k=>document.getElementById(k).placeholder=ph[k]);
+      return `<div class="small">Protein <b class="num">${n.p} g</b> · Carbs <b class="num">${n.c} g</b> · Fat <b class="num">${n.f} g</b> · Sugar max <b class="num">${n.s} g</b> · Fiber <b class="num">${n.fi} g</b> · Water <b class="num">${n.w} glasses</b></div>`})()}
     ${c.floored?`<span class="small muted">Raised to a safe minimum. Eating less than this is hard to keep up and can make you lose muscle.</span>`:""}`;
 }
 
 function targetFor(p){const c=calcTarget(p);return Number(p.manual)?Number(p.manual):c?c.target:null}
 function nutTargets(p){
-  p=p||state.meta.profile||{};
+  p=p||curProfile();
   const t=targetFor(p); if(!t) return null;
-  const w=Number(p.weight)||latestWeight()||70;
+  const w=Number(p.weight)||latestWeight()||70, goal=Number(p.goal)||w;
+  const ref=goal; // protein and fat are sized to the body you are aiming for
   const o=k=>Number(p[k])>0?Number(p[k]):null;
-  const pr=o("tP")??Math.round(Math.min(1.6*w,t*0.35/4)), f=o("tF")??Math.round(t*0.28/9);
-  return {kcal:t,p:pr,f,c:o("tC")??Math.max(0,Math.round((t-pr*4-f*9)/4)),s:o("tS")??Math.round(t*0.10/4),fi:o("tFi")??30,
-    w:o("tW")??Math.max(8,Math.min(12,Math.round(w*35/250))),fv:o("tFv")??5};
+  // Protein 1.8 g per kg of goal weight keeps muscle while losing fat (max 40% of calories)
+  const pr=o("tP")??Math.round(Math.min(1.8*ref,t*0.40/4));
+  // Fat about 27% of calories, never under 0.6 g per kg of goal weight
+  const f=o("tF")??Math.round(Math.max(0.6*ref,t*0.27/9));
+  return {kcal:t,p:pr,f,c:o("tC")??Math.max(0,Math.round((t-pr*4-f*9)/4)),s:o("tS")??Math.round(t*0.10/4),
+    fi:o("tFi")??Math.max(25,Math.round(t/1000*14)),
+    w:o("tW")??Math.max(8,Math.min(14,Math.round(w*35/250))),fv:o("tFv")??5};
 }
 const WATER_NAMES=["Water","Teh tawar / tea, no sugar","Aqua / Le Minerale / Cleo (water)","Coffee, black","Americano / long black"];
 function portionMl(label){const m=/([\d.]+)\s*(ml|L)\b/i.exec(label||"");if(m)return Number(m[1])*(m[2].toLowerCase()==="l"?1000:1);return 250}
@@ -1187,13 +1251,22 @@ document.addEventListener("click",e=>{
     cfName.value=cfPortion.value=cfKcal.value=cfP.value=cfC.value=cfS.value=cfF.value=""; persist("meta"); render(); return toast("Saved to your foods");
   }
   if(t.dataset.cfdel){state.meta.custom=state.meta.custom.filter(c=>c.id!==t.dataset.cfdel);persist("meta");render();return toast("Food deleted")}
-  if(t.id==="pSave"){state.meta.profile=readProfile();persist("meta");toast("Target saved: "+n0(target()||0)+" kcal");tab="today";return render()}
+  if(t.id==="pSave"){
+    const np=readProfile();
+    if(!np.age||!np.height||!np.weight){toast("Fill in age, height and weight");return (!np.age?pAge:!np.height?pHeight:pWeight).focus()}
+    const old=state.meta.profile||{};
+    const wv=Math.round(Number(np.weight)*10)/10;
+    if(wv&&wv!==latestWeight())state.meta.weights[ymd(new Date())]=wv; // the weight you typed is today's weigh-in
+    np.start=(old.start&&Number(old.goal)===Number(np.goal))?old.start:wv; // a new goal restarts the progress bar
+    state.meta.profile=np;persist("meta");editingPlan=false;window.scrollTo(0,0);toast("Plan saved");return render()}
+  if(t.id==="editPlan"){editingPlan=true;window.scrollTo(0,0);return render()}
+  if(t.id==="pCancel"){editingPlan=false;window.scrollTo(0,0);return render()}
 });
 document.addEventListener("input",e=>{
   if(e.target.id==="q")renderFoodList(document.getElementById("results"),e.target.value,catFilter,200,true);
   if(e.target.id==="exq")drawExList(e.target.value);
   if(e.target.id==="browseQ")renderFoodList(document.getElementById("browseList"),e.target.value,"all",60,true);
-  if(["pSex","pAge","pHeight","pWeight","pAct","pPace","pManual"].includes(e.target.id))updateCalc();
+  if(["pSex","pAge","pHeight","pWeight","pGoal","pAct","pPace","pManual"].includes(e.target.id))updateCalc();
 });
 document.addEventListener("change",e=>{
   if(["pSex","pAct","pPace"].includes(e.target.id))updateCalc();
