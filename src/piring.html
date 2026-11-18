@@ -651,6 +651,9 @@ function loadLocal(){try{const s=JSON.parse(localStorage.getItem(LS_KEY)||"null"
 function saveLocal(){try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}}
 function setSync(t){document.getElementById("sync").textContent=t}
 function persist(docId){
+  // Today's targets are saved with the day, so past days keep the numbers they had
+  const today=ymd(new Date());
+  if(docId==="d-"+today&&state.days[today]){const t=dayTargets(today);state.days[today].tg=t?JSON.parse(JSON.stringify(t)):null}
   saveLocal();
   if(!col) return;
   pending[docId] = docId==="meta" ? state.meta : (state.days[docId.slice(2)]||{items:[],workouts:[],workMin:0});
@@ -691,7 +694,7 @@ async function initDb(){
         if(pending[doc.id]!==undefined||running[doc.id])return;
         const v=doc.data()||{};
         if(doc.id==="meta") next.meta={profile:v.profile||{},custom:v.custom||[],weights:v.weights||{}};
-        else if(doc.id.startsWith("d-")) next.days[doc.id.slice(2)]={items:v.items||[],workouts:v.workouts||[],workMin:v.workMin||0};
+        else if(doc.id.startsWith("d-")) next.days[doc.id.slice(2)]={items:v.items||[],workouts:v.workouts||[],workMin:v.workMin||0,tg:v.tg||null};
       });
       state=next; saveLocal(); setSync("Saved to your account"); render();
     },err=>{done=true;clearTimeout(timer);setSync("Offline. Saving on this device.")});
@@ -733,7 +736,7 @@ function render(){
 }
 
 function renderToday(){
-  const tot=dayTotal(viewDate), dt=dayTargets(viewDate), t=dt?dt.kcal:target();
+  const tot=dayTotal(viewDate), dt=targetsFor(viewDate), t=dt?dt.kcal:target();
   const s=document.getElementById("summary");
   if(t){
     const left=t-tot, pct=Math.min(100,tot/t*100);
@@ -971,6 +974,14 @@ function dayTargets(d){
     w:base.w+(ex>0?Math.round(ex/250):0)}); // a glass of water per ~250 kcal burned
   return t;
 }
+// Today is worked out live; any other day shows the numbers saved on that day
+function targetsFor(d){
+  if(d===ymd(new Date())) return dayTargets(d);
+  const st=state.days[d]&&state.days[d].tg;
+  if(st) return Object.assign({},st,{past:true});
+  const b=nutTargets(); if(!b) return null;
+  return Object.assign({},b,{plan:b.kcal,workAdd:0,catchUp:0,past:true,estimated:true});
+}
 function goalEta(){
   const p=curProfile(), c=calcTarget(p), w=Number(p.weight), goal=Number(p.goal);
   if(!c||!goal) return null;
@@ -981,7 +992,7 @@ function goalEta(){
   return {goal,diff,wk,date:parseYmd(addDays(ymd(new Date()),wk*7))};
 }
 function renderNutrition(){
-  const el=document.getElementById("nutrition"), tg=dayTargets(viewDate);
+  const el=document.getElementById("nutrition"), tg=targetsFor(viewDate);
   if(!tg){el.innerHTML=`<h2>Today's recommendation</h2><p class="small" style="margin:0">Fill in the Target tab once. Then this card tells you how much calories, protein, carbs, fat, sugar, fiber and water you need each day, and what to eat next.</p><button class="btn primary" data-go="target">Set my targets</button>`;return}
   const n=dayNut(viewDate), eaten=dayTotal(viewDate), water=dayWaterGlasses(viewDate);
   const rows=[["Calories",eaten,tg.kcal,"kcal","aim"],["Protein",n.p,tg.p,"g","aim"],["Carbs",n.c,tg.c,"g","aim"],["Fat",n.f,tg.f,"g","aim"],["Sugar",n.s,tg.s,"g","limit"],["Fiber",n.fi,tg.fi,"g","aim"],["Fruit & veg",n.fv,tg.fv,"servings","aim"],["Water",water,tg.w,"glasses","aim"]];
@@ -1010,19 +1021,20 @@ function renderNutrition(){
   const have=KEY_MICROS.length-miss.length, vp=Math.round(have/KEY_MICROS.length*100);
   if(eaten&&miss.length)tips.push(`Still missing ${miss.slice(0,3).map(m=>`<b>${MICRO[m]}</b> (${MICRO_FOODS[m]})`).join(", ")}.`);
   const eta=goalEta();
-  const goalLine=!eta?`Add a goal weight on the Target tab and these numbers will be set to reach it.`
+  const goalLine=tg.past?(tg.estimated?`Targets for this day were not saved, so these are your current plan's numbers.`:`These were your targets on this day, saved as they were.`)
+    :!eta?`Add a goal weight on the Target tab and these numbers will be set to reach it.`
     :eta.at?`You are at your goal of <b>${eta.goal} kg</b>. These amounts keep you there.`
     :eta.noPace?`Pick a pace on the Target tab to start moving toward <b>${eta.goal} kg</b>.`
     :`To reach <b>${eta.goal} kg</b> by about <b>${eta.date.toLocaleDateString(undefined,{month:"long",year:"numeric"})}</b>, this is what you need today.`;
   const adj=[];
   if(tg.workAdd)adj.push(`<b>+${n0(tg.workAdd)} kcal</b> because you trained (half of the ${n0(dayExerciseKcal(viewDate))} kcal you burned), mostly as carbs`);
   if(tg.catchUp<0)adj.push(`<b>−${n0(-tg.catchUp)} kcal</b> to make up for eating ${n0(tg.over)} kcal over your plan ${tg.days>1?` in the last ${tg.days} logged days`:" on your last logged day"}`);
-  el.innerHTML=`<div class="row between"><h2>Today's recommendation</h2><span class="pill ${onTrack>=6?"":onTrack>=3?"flat":"warn"}">${onTrack} of ${rows.length} on track</span></div>
+  el.innerHTML=`<div class="row between"><h2>${tg.past?"That day's targets":"Today's recommendation"}</h2><span class="pill ${onTrack>=6?"":onTrack>=3?"flat":"warn"}">${onTrack} of ${rows.length} on track</span></div>
     <p class="small" style="margin:0">${goalLine}</p>
-    ${adj.length?`<div class="small muted">Your plan is ${n0(tg.plan)} kcal. Today: ${adj.join("; ")}.</div>`:""}
+    ${adj.length?`<div class="small muted">Your plan is ${n0(tg.plan)} kcal. ${tg.past?"That day":"Today"}: ${adj.join("; ")}.</div>`:""}
     <div class="nut" style="grid-template-columns:100px minmax(0,1fr) auto">${html}</div>
     ${n.unknown?`<p class="small muted" style="margin:0">${n.unknown} item(s) typed in by kcal only, so their protein, carbs and fat are not counted.</p>`:""}
-    ${tips.length?`<div class="basket"><span class="label" style="color:var(--accent)">What to eat next</span><ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">${tips.slice(0,5).map(t=>`<li>${t}</li>`).join("")}</ul></div>`:""}
+    ${tips.length&&!tg.past?`<div class="basket"><span class="label" style="color:var(--accent)">What to eat next</span><ul class="small" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">${tips.slice(0,5).map(t=>`<li>${t}</li>`).join("")}</ul></div>`:""}
     <div class="row between"><h3>Vitamins & minerals</h3><span class="pill ${vp>=70?"":vp>=40?"flat":"warn"}">${vp}% covered</span></div>
     <div class="mchips">${KEY_MICROS.map(m=>`<span class="mchip ${n.micros[m]?"on":""}">${n.micros[m]?"✓ ":""}${MICRO[m]}</span>`).join("")}</div>
     <p class="small muted" style="margin:0">Targets come from the Target tab. A vitamin is ticked when you ate at least one food that is a good source of it.</p>`;
@@ -1293,7 +1305,7 @@ document.addEventListener("click",e=>{
     const wv=Math.round(Number(np.weight)*10)/10;
     if(wv&&wv!==latestWeight())state.meta.weights[ymd(new Date())]=wv; // the weight you typed is today's weigh-in
     np.start=(old.start&&Number(old.goal)===Number(np.goal))?old.start:wv; // a new goal restarts the progress bar
-    state.meta.profile=np;persist("meta");editingPlan=false;window.scrollTo(0,0);toast("Plan saved");return render()}
+    state.meta.profile=np;persist("meta");if(state.days[ymd(new Date())])persist("d-"+ymd(new Date()));editingPlan=false;window.scrollTo(0,0);toast("Plan saved");return render()}
   if(t.id==="editPlan"){editingPlan=true;window.scrollTo(0,0);return render()}
   if(t.id==="pCancel"){editingPlan=false;window.scrollTo(0,0);return render()}
 });
