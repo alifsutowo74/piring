@@ -1230,6 +1230,12 @@ document.getElementById("importFile").addEventListener("change",e=>{
     catch(err){toast("That file is not a Piring backup")}e.target.value=""};
   r.readAsText(f);
 });
+// When the app comes back after midnight, move "Today" to the new day
+let lastToday=ymd(new Date());
+function checkNewDay(){const t=ymd(new Date());if(t!==lastToday){if(viewDate===lastToday)viewDate=t;lastToday=t;render()}}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)checkNewDay()});
+window.addEventListener("focus",checkNewDay);
+setInterval(checkNewDay,60000);
 // Phone back button: close the sheet, then go back to Today, then leave the app
 window.__back=()=>{if(!document.getElementById("sheet").hidden){closeSheet();return true}if(tab!=="today"){tab="today";render();return true}return false};
 loadLocal();
