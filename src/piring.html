@@ -201,7 +201,9 @@ input[type=text],input[type=number],input[type=date],input[type=search],select{w
       <div class="chart" id="cChart"></div>
       <h2 style="margin-top:10px">Workout volume</h2>
       <div class="chart" id="vChart"></div>
-      <p class="small muted" style="margin:0">All three charts use the same dates, so you can read straight down from one to the next.</p>
+      <h2 style="margin-top:10px">Weight effect</h2>
+      <div class="chart" id="eChart"></div>
+      <p class="small muted" style="margin:0">All four charts use the same dates, so you can read straight down from one to the next.</p>
     </div>
     <div class="panel stack" id="road"></div>
     <div class="panel stack" id="predict"></div>
@@ -934,6 +936,18 @@ function bucketBars(P,vals,colorOf,opts){
   const tl=opts.line?`<line x1="${CH.L}" x2="${CH.W-CH.R}" y1="${y(opts.line)}" y2="${y(opts.line)}" stroke="var(--fg)" stroke-dasharray="4 3" stroke-width="1.2"/><text x="${CH.W-CH.R}" y="${y(opts.line)-4}" text-anchor="end" style="fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:4px">${opts.lineLabel}</text>`:"";
   return `<svg viewBox="0 0 ${CH.W} ${H}" role="img" aria-label="${opts.aria}">${gridLines(top,step,y,opts.fmt)}${bars}${tl}${axisLabels(P,H)}</svg>`;
 }
+// bars that go up (gain) or down (loss) from a zero line
+function divBars(P,vals,colorOf,opts){
+  const H=170,T=12,B=24;
+  const mx=Math.max(opts.min||0.1,...vals.map(Math.abs)), step=niceStep(mx), top=Math.ceil(Math.max(0,...vals)/step)*step||step, bot=Math.ceil(Math.max(0,...vals.map(v=>-v))/step)*step||step;
+  const y=v=>T+(top-v)/(top+bot)*(H-T-B);
+  let g="";for(let v=-bot;v<=top+1e-9;v+=step)g+=`<line x1="${CH.L}" x2="${CH.W-CH.R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${CH.L-6}" y="${y(v)+3}" text-anchor="end">${opts.fmt(v)}</text>`;
+  const zero=`<line x1="${CH.L}" x2="${CH.W-CH.R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1.2"/>`;
+  const bars=P.buckets.map((b,k)=>{const x0=chX(b.i0,P.n)-(CH.W-CH.L-CH.R)/P.n/2, x1=chX(b.i1,P.n)+(CH.W-CH.L-CH.R)/P.n/2, wd=x1-x0, pad=Math.min(3,wd*0.15);
+    const v=vals[k];if(!v)return "";const ya=Math.min(y(v),y(0)),h=Math.max(1,Math.abs(y(v)-y(0)));
+    return `<rect x="${(x0+pad).toFixed(1)}" y="${ya.toFixed(1)}" width="${Math.max(1,wd-2*pad).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${colorOf(v,b)}"/>`}).join("");
+  return `<svg viewBox="0 0 ${CH.W} ${H}" role="img" aria-label="${opts.aria}">${g}${bars}${zero}${axisLabels(P,H)}</svg>`;
+}
 function weightChart(P,pts,ma){
   const H=190,T=12,B=24, first=P.days[0], idx=d=>(parseYmd(d)-parseYmd(first))/864e5;
   const inR=pts.map((p,i)=>({d:p[0],v:p[1],m:ma[i]})).filter(o=>o.d>=first);
@@ -995,6 +1009,23 @@ function renderProgress(){
   document.getElementById("vChart").innerHTML=vt?bucketBars(P,vv,v=>v?"color-mix(in srgb,var(--accent) 70%,var(--fg))":"var(--surface-2)",{min:500,fmt:v=>v>=1000?(v/1000)+"t":v,aria:"Workout volume"})
     +`<p class="small muted" style="margin:6px 0 0">${weekly?"Each bar is one week's total":"Each bar is one day's total"} (reps × kg). Total this ${periodLabel()}: <b class="num">${fmtKg(vt)}</b>.</p>`
     :`<div class="empty">No weight training logged in this ${periodLabel()}.</div>`;
+  // weight effect: food eaten minus what the body and workouts burned, per day, in kg
+  const eEl=document.getElementById("eChart");
+  if(!calcTarget()) eEl.innerHTML=`<div class="empty">Fill in the Target tab so the app knows how much you burn.</div>`;
+  else{
+    const logged=P.days.filter(d=>dayTotal(d)>0);
+    const ev=P.buckets.map(b=>b.days.reduce((a,d)=>a+(dayTotal(d)>0?balanceFor(d).kg:0),0));
+    if(!logged.length) eEl.innerHTML=`<div class="empty">No food logged in this ${periodLabel()}.</div>`;
+    else{
+      const sum=logged.reduce((a,d)=>{const b=balanceFor(d);a.e+=b.eaten;a.x+=b.ex;a.burn+=b.burn;a.kg+=b.kg;return a},{e:0,x:0,burn:0,kg:0});
+      const sc=pts.length?(()=>{const bf=pts.filter(p=>p[0]<P.days[0]).pop(),ir=pts.filter(p=>p[0]>=P.days[0]);const a=bf||ir[0],z=pts[pts.length-1];return a&&z&&a!==z&&z[0]>=P.days[0]?z[1]-a[1]:null})():null;
+      eEl.innerHTML=divBars(P,ev,v=>v>0?"var(--chili)":"var(--good)",{min:0.05,fmt:v=>{const g=Math.round(v*1000);return g===0?"0":Math.abs(g)>=1000?(g/1000).toFixed(1)+"kg":g+"g"},aria:"Estimated weight effect"})
+        +`<div class="stats" style="margin-top:8px"><div class="stat"><span class="label">Eaten</span><b class="num">${n0(sum.e)}</b><span class="small muted">kcal</span></div>
+          <div class="stat"><span class="label">Burned</span><b class="num">${n0(sum.burn)}</b><span class="small muted">${sum.x?`incl. ${n0(sum.x)} workout`:"kcal"}</span></div>
+          <div class="stat"><span class="label">Effect</span><b class="num" style="color:${sum.kg<0?"var(--good)":sum.kg>0?"var(--chili)":"inherit"}">${kgText(sum.kg)}</b><span class="small muted">estimated</span></div></div>
+        <p class="small muted" style="margin:6px 0 0">${weekly?"Each bar is one week":"Each bar is one day"}: food eaten minus what your body and workouts burned, divided by 7,700 kcal per kg. Green below the line is loss, red above is gain. Counts the ${logged.length} day${logged.length>1?"s":""} with food logged.${sc!==null?` Your scale moved <b class="num">${sc>0?"+":""}${sc.toFixed(1)} kg</b> in the same ${periodLabel()}; water and food in your stomach make the scale jump around, so trust the trend over a few weeks.`:""}</p>`;
+    }
+  }
   const wl=document.getElementById("wList");
   const shown=showAllWeights?pts.slice().reverse():pts.slice().reverse().slice(0,10);
   wl.innerHTML=(pts.length?shown.map(p=>`<div class="item"><div class="t"><b>${fmtDate(p[0],{weekday:"short",day:"numeric",month:"short",year:"numeric"})}</b></div><span class="k num">${p[1].toFixed(1)} kg</span><button class="x" data-wdel="${p[0]}" aria-label="Delete weigh-in">✕</button></div>`).join(""):`<div class="empty">Nothing yet.</div>`)
@@ -1389,7 +1420,10 @@ function showSearch(){
   const r=recentFoods();
   document.getElementById("recent").innerHTML=r.length?`<div class="label" style="margin-bottom:2px">Recently eaten</div><div class="foods">${r.map(f=>`<button class="food" data-food="${f.id}"><div class="t"><b>${esc(f.name)}</b></div><span class="k">+</span></button>`).join("")}</div><div class="label" style="margin-top:10px">All foods</div>`:"";
   renderFoodList(document.getElementById("results"),"",catFilter,200,true);
+  updateRecent();
 }
+// hide "Recently eaten" once the person types or picks another category
+function updateRecent(){const r=document.getElementById("recent"),q=document.getElementById("q");if(!r||!q)return;r.hidden=!!q.value.trim()||catFilter!==(sheetMeal==="k"?"drink":"all")}
 function showPortion(foodId){
   const f=allFoods().find(x=>x.id===foodId); if(!f)return;
   sel={food:f,pi:Math.min(1,f.portions.length-1),qty:1,ml:null};
@@ -1468,8 +1502,8 @@ document.addEventListener("click",e=>{
   if(t.id==="nextDay"){if(viewDate<ymd(new Date()))viewDate=addDays(viewDate,1);return render()}
   if(t.dataset.del){const d=state.days[viewDate];d.items=d.items.filter(i=>i.id!==t.dataset.del);persist("d-"+viewDate);render();return toast("Removed")}
   if(t.dataset.meal){sheetMeal=t.dataset.meal;
-    if(sheetMeal==="k"&&!catFilter.startsWith("drink")){catFilter="drink";document.querySelectorAll("[data-cat]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.cat===catFilter));renderFoodList(document.getElementById("results"),document.getElementById("q").value,catFilter,200,true)}document.querySelectorAll("[data-meal]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.meal===sheetMeal));document.getElementById("sheetTitle").textContent="Add to "+MEALS.find(m=>m[0]===sheetMeal)[1].toLowerCase();return}
-  if(t.dataset.cat){catFilter=t.dataset.cat;document.querySelectorAll("[data-cat]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.cat===catFilter));return renderFoodList(document.getElementById("results"),document.getElementById("q").value,catFilter,200,true)}
+    if(sheetMeal==="k"&&!catFilter.startsWith("drink")){catFilter="drink";document.querySelectorAll("[data-cat]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.cat===catFilter));renderFoodList(document.getElementById("results"),document.getElementById("q").value,catFilter,200,true)}document.querySelectorAll("[data-meal]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.meal===sheetMeal));document.getElementById("sheetTitle").textContent="Add to "+MEALS.find(m=>m[0]===sheetMeal)[1].toLowerCase();updateRecent();return}
+  if(t.dataset.cat){catFilter=t.dataset.cat;document.querySelectorAll("[data-cat]").forEach(c=>c.setAttribute("aria-pressed",c.dataset.cat===catFilter));renderFoodList(document.getElementById("results"),document.getElementById("q").value,catFilter,200,true);return updateRecent()}
   if(t.dataset.food){if(document.getElementById("sheet").hidden){openSheet();}return showPortion(t.dataset.food)}
   if(t.id==="backBtn")return showSearch();
   if(t.dataset.pi){sel.pi=Number(t.dataset.pi);sel.ml=null;return drawPortion()}
@@ -1539,7 +1573,7 @@ document.addEventListener("click",e=>{
   if(t.id==="pCancel"){editingPlan=false;window.scrollTo(0,0);return render()}
 });
 document.addEventListener("input",e=>{
-  if(e.target.id==="q")renderFoodList(document.getElementById("results"),e.target.value,catFilter,200,true);
+  if(e.target.id==="q"){renderFoodList(document.getElementById("results"),e.target.value,catFilter,200,true);updateRecent()}
   if(e.target.id==="exq")drawExList(e.target.value);
   if(e.target.id==="mlIn"&&sel){sel.ml=Number(e.target.value)>0?Number(e.target.value):null;drawPortion()}
   if(e.target.id==="browseQ")drawBrowse();
